@@ -29,7 +29,7 @@ Auto Read 是一款专为 Linux.do 社区设计的油猴脚本，旨在自动化
 #### 安装说明
 
 1. 安装 Tampermonkey 浏览器扩展（[Chrome](https://chrome.google.com/webstore/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo) / [Firefox](https://addons.mozilla.org/en-US/firefox/addon/tampermonkey/)）
-2. 点击脚本在 GreasyFork 上的安装链接
+2. 点击脚本在 [GreasyFork](https://greasyfork.org/zh-CN/scripts/538431-auto-read-linux-do-only) 上的安装链接
 3. 在弹出的确认窗口中点击"安装"
 4. 安装完成后，访问 Linux.do 社区即可看到控制面板
 
