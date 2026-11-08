@@ -1,0 +1,5 @@
+node_modules/
+.tmp-patch/
+.tmp-test/
+*.log
+.DS_Store

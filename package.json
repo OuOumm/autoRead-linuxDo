@@ -1,0 +1,13 @@
+{
+  "name": "auto-read-linuxdo",
+  "version": "4.4.2",
+  "private": true,
+  "description": "linux.do 自动阅读 / 点赞 / AI 评论的 Tampermonkey 脚本（单文件，无构建）",
+  "scripts": {
+    "check": "node --check auto-read.js",
+    "test": "node test/run.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.3"
+  }
+}
