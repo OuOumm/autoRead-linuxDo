@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         自动阅读 linux.do 论坛
 // @namespace    https://github.com/auto-read-linuxDo
-// @version      4.6.0
+// @version      4.6.1
 // @description  自动滚动阅读 linux.do 未读帖子，支持自动点赞与 AI 评论；设置面板可配置 AI 接口地址与模型，并可一键测试生成回复。每个标签页一个实例，可多开并行互不干扰。滚动由计时器驱动，窗口失焦也不暂停；没有回复的单楼帖没有进度条，宽限约 3 秒后自动跳过。已读按论坛的 .read-state 标记统计，滚动由高频小步计时器驱动，顺滑流畅；节奏可在设置面板调节。面板使用 Shadow DOM 隔离，不依赖任何外部 CDN。
 // @author       OuOumm
 // @match        https://linux.do/*
@@ -19,7 +19,7 @@
 
     // ===================== 配置 =====================
     // 这里的值只是默认值，用户可在面板「设置」中覆盖，覆盖后存入本地存储。
-    const VERSION = '4.6.0';
+    const VERSION = '4.6.1';
 
     // 设置结构版本：改了 DEFAULTS 里的默认值就把它 +1，
     // 老存档里的对应项会被刷新成新默认（详见 Store#_migrateSettings）。
@@ -30,8 +30,9 @@
         maxRetries: 3,             // 连续错误页重试次数
         scrollSpeed: 1,            // 每拍向下滚动像素：高频小步（1px/16ms ≈ 62px/s），视觉顺滑不卡顿
         scrollInterval: 16,        // 滚动间隔（毫秒）：≈60fps 一帧，固定节奏
-        backChance: 0.15,          // 回看概率：每拍有多大概率向上滚一小段（0=关闭）
-        backPixels: 5,             // 回看像素：触发回看时向上滚多少像素
+        backEveryMin: 15,          // 每隔多少次下滑回看一次（下限，0=关闭回看）
+        backEveryMax: 40,          // 每隔多少次下滑回看一次（上限）
+        backPixelsMax: 5,          // 回看像素：每次在 1~此值 之间随机
         noProgressGraceMs: 3000,   // 读不到进度条时再滚多久才判读完（毫秒，约 3 秒），给异步渲染留窗口
         likeIntervalMin: 2000,     // 点赞间隔下限
         likeIntervalMax: 5000,     // 点赞间隔上限
@@ -68,8 +69,9 @@
     const SCROLL_FIELDS = [
         { key: 'scrollSpeed', id: 'setScrollSpeed', label: '向下滚动（像素/帧）', type: 'number', min: 1, max: 200, step: 1 },
         { key: 'scrollInterval', id: 'setScrollInterval', label: '滚动间隔（毫秒/帧）', type: 'number', min: 8, max: 10000, step: 8 },
-        { key: 'backChance', id: 'setBackChance', label: '回看概率（0~1，0=关闭）', type: 'number', min: 0, max: 1, step: 0.01 },
-        { key: 'backPixels', id: 'setBackPixels', label: '回看像素（向上）', type: 'number', min: 1, max: 100, step: 1 },
+        { key: 'backEveryMin', id: 'setBackEveryMin', label: '回看间隔下限（下滑次数）', type: 'number', min: 0, max: 1000, step: 1 },
+        { key: 'backEveryMax', id: 'setBackEveryMax', label: '回看间隔上限（下滑次数）', type: 'number', min: 0, max: 1000, step: 1 },
+        { key: 'backPixelsMax', id: 'setBackPixelsMax', label: '回看像素上限（1~N 随机）', type: 'number', min: 1, max: 100, step: 1 },
     ];
 
     // 选择器集中管理：优先用稳定的 class / 属性，中文 title 只做兜底，
@@ -1394,6 +1396,14 @@
                 return Number.isFinite(n) && n > 0 ? n : 3000;
             };
             let lastTs = 0;
+            // 回看计数器：正常下滑不计入方向随机，只在达到阈值时额外叠加一次向上回看
+            let downCount = 0;
+            const nextBackAt = () => {
+                const min = Math.max(0, Math.min(10000, Number(this.settings.backEveryMin) || 0));
+                const max = Math.max(min, Math.min(10000, Number(this.settings.backEveryMax) || min));
+                return min <= 0 ? 0 : randomBetween(min, max);
+            };
+            let backAt = nextBackAt();
 
             const tick = (ts) => {
                 if (!this.state.isReading || this.state.isPaused) {
@@ -1407,14 +1417,18 @@
                 // 按真实经过时间补偿：后台标签页被浏览器降频（比如 1 秒一拍）时，
                 // 一帧补上相应距离，整体速度不因降频变慢，也不会因补偿过大而跳屏。
                 const frames = Math.min(60, Math.max(0.5, elapsed / intervalMs()));
-                // 方向随机：默认向下滚 scrollSpeed，偶尔（backChance）向上回看 backPixels。
-                // 只随机方向，间隔固定；净进度仍为正，整体继续往下读。
-                const chance = Math.max(0, Math.min(1, Number(this.settings.backChance) || 0));
-                const goingBack = chance > 0 && Math.random() < chance;
-                const delta = goingBack
-                    ? -Math.max(1, Math.round((Number(this.settings.backPixels) || 5) * frames))
-                    : Math.max(1, Math.round(stepPx() * frames));
-                window.scrollBy(0, delta);
+                // 正常下滑：每拍照常，不受回看影响
+                window.scrollBy(0, Math.max(1, Math.round(stepPx() * frames)));
+
+                // 额外回看：累计下滑到随机次数后，叠加一次向上小滚（1~backPixelsMax 随机），
+                // 与下滑完全独立，不改变下滑节奏与次数。
+                if (backAt > 0 && ++downCount >= backAt) {
+                    const cap = Math.max(1, Math.min(100, Number(this.settings.backPixelsMax) || 5));
+                    const up = randomBetween(1, cap);
+                    window.scrollBy(0, -up);
+                    downCount = 0;
+                    backAt = nextBackAt();
+                }
 
                 // 高频滚动下没必要每帧都扫：约每 200ms 查一次已读/进度即可，
                 // 既跟得上论坛的 .read-state 更新，又不拖慢滚动。

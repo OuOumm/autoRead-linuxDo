@@ -531,7 +531,7 @@ async function main() {
 
   reader.settings.scrollInterval = 5;
   reader.settings.scrollSpeed = 50;
-  reader.settings.backChance = 0;   // 关掉回看，先验证「向下滚」基准行为
+  reader.settings.backEveryMin = 0;  // 关掉回看，先验证「向下滚」基准行为
   reader.state.isReading = true;
   reader.state.isPaused = false;
   reader.state.autoCommentEnabled = false;
@@ -781,7 +781,7 @@ async function main() {
   reader.openNextTopic = () => {};
   reader.settings.scrollSpeed = 1;
   reader.settings.scrollInterval = 16;   // 正常帧 16ms → 每帧 1px
-  reader.settings.backChance = 0;        // 关掉回看，先验基准节奏与时间补偿
+  reader.settings.backEveryMin = 0;      // 关掉回看，先验基准节奏与时间补偿
   compPosts.textContent = '1 / 50';       // 未读完，避免提前停表
   reader.state.isReading = true;
   reader.state.isPaused = false;
@@ -814,7 +814,7 @@ async function main() {
   reader.openNextTopic = origCompNext;
   reader.settings.scrollSpeed = origCompSpeed;
   reader.settings.scrollInterval = origCompInterval;
-  reader.settings.backChance = 0.15;
+  reader.settings.backEveryMin = 15;
   win.Math.random = origCompRandom;
   compPosts.textContent = '1 / 1';
   reader.state.isReading = false;
@@ -842,8 +842,8 @@ async function main() {
   eq('新版本下用户自定义步长被保留', keptStore.settings.scrollSpeed, 3);
   eq('新版本下用户自定义间隔被保留', keptStore.settings.scrollInterval, 40);
 
-  // ===================== 18. 方向随机：向下为主，偶尔向上回看 =====================
-  // 用户要的「滚动时随机：往下 2px、往上 5px」，不做间隔抖动与停顿模拟。
+  // ===================== 18. 回看：按次数触发、像素随机、不影响下滑 =====================
+  // 需求：正常下滑每拍照常；每隔随机 N 次下滑，额外叠加一次向上回看 1~N 像素。
   reader.stopScrolling();
   reader.state.isReading = true;
   reader.state.isPaused = false;
@@ -851,46 +851,59 @@ async function main() {
   if (dirPosts) dirPosts.textContent = '1 / 50';
   reader.settings.scrollSpeed = 2;
   reader.settings.scrollInterval = 8;
-  reader.settings.backChance = 1;      // 恒定触发回看
-  reader.settings.backPixels = 5;
   const origDirRandom = win.Math.random;
-  win.Math.random = () => 0;           // 0 < 1 恒真，必回看
-
-  const dY = [];
   const origDirScrollBy = win.scrollBy;
-  win.scrollBy = (x, y) => { dY.push(y); };
-  reader.startScrolling();
-  await until(() => dY.length >= 3, 1000);
-  reader.stopScrolling();
-  ok('backChance=1 时全程向上回看', dY.length >= 3 && dY.every((y) => y < 0), `dY=${dY.slice(0, 5)}`);
-  ok('回看像素为 -5', dY[0] === -5, `first=${dY[0]}`);
 
-  // backChance=0 → 恒向下
-  reader.settings.backChance = 0;
-  const dY2 = [];
-  win.scrollBy = (x, y) => { dY2.push(y); };
+  // 场景 A：关闭回看（backEveryMin=0）→ 全程向下，步长在基准附近（时间补偿会 ±1）
+  reader.settings.backEveryMin = 0;
+  reader.settings.backEveryMax = 0;
+  const dA = [];
+  win.scrollBy = (x, y) => { dA.push(y); };
   reader.startScrolling();
-  await until(() => dY2.length >= 3, 1000);
+  await until(() => dA.length >= 4, 1000);
   reader.stopScrolling();
-  ok('backChance=0 时恒向下', dY2.length >= 3 && dY2.every((y) => y > 0), `dY2=${dY2.slice(0, 5)}`);
-  ok('向下步长为 2', dY2[0] === 2, `first=${dY2[0]}`);
+  ok('关闭回看时全程向下', dA.length >= 4 && dA.every((y) => y > 0), `dA=${dA.slice(0, 6)}`);
+  ok('向下步长在基准附近', dA.every((y) => y >= 2 && y <= 4), `dA=${dA.slice(0, 6)}`);
 
-  // 概率 0.5 + 交替随机 → 上下都出现，且净进度为正（2 下 vs 5 上太多会倒退，这里校验方向混合）
-  reader.settings.backChance = 0.5;
-  let flip = 0;
-  win.Math.random = () => (flip++ % 2 === 0 ? 0 : 0.9);
-  const dY3 = [];
-  win.scrollBy = (x, y) => { dY3.push(y); };
+  // 场景 B：每 3 次下滑回看一次。验证「下滑为主、每 3 次夹一次回看」
+  reader.settings.backEveryMin = 3;
+  reader.settings.backEveryMax = 3;
+  reader.settings.backPixelsMax = 5;
+  win.Math.random = () => 0;
+  const dB = [];
+  win.scrollBy = (x, y) => { dB.push(y); };
   reader.startScrolling();
-  await until(() => dY3.length >= 6, 1200);
+  await until(() => dB.length >= 10, 1200);
   reader.stopScrolling();
-  ok('概率 0.5 时上下方向都出现', dY3.some((y) => y > 0) && dY3.some((y) => y < 0), `dY3=${dY3.slice(0, 8)}`);
+  const downsB = dB.filter((y) => y > 0);
+  const backsB = dB.filter((y) => y < 0);
+  ok('回看按次数触发：下滑远多于回看', downsB.length >= 2 * backsB.length && backsB.length >= 2, `downs=${downsB.length} backs=${backsB.length}`);
+  // 回看出现在序列中：第 4 个正数动作后应有第一个负数
+  const firstBackIdx = dB.findIndex((y) => y < 0);
+  ok('约每 3 次下滑出现一次回看', firstBackIdx >= 2 && firstBackIdx <= 4, `firstBackIdx=${firstBackIdx} dB=${dB.slice(0, 10)}`);
+  ok('回看像素在 1~5 内', backsB.every((y) => y >= -5 && y <= -1), `backs=${backsB.slice(0, 5)}`);
+
+  // 场景 C：回看像素随机性 —— 用真实 Math.random 跑足够多帧
+  reader.settings.backEveryMin = 1;
+  reader.settings.backEveryMax = 1;
+  win.Math.random = origDirRandom;
+  const dC = [];
+  win.scrollBy = (x, y) => { dC.push(y); };
+  reader.startScrolling();
+  await until(() => dC.length >= 20, 2500);
+  reader.stopScrolling();
+  const backVals = dC.filter((y) => y < 0).map((y) => -y);
+  ok('回看像素随机（出现多个不同值）', new Set(backVals).size >= 2, `backVals=${backVals.slice(0, 12)}`);
+  ok('回看像素落在 1~5', backVals.every((v) => v >= 1 && v <= 5), `backVals=${backVals.slice(0, 12)}`);
+  const downsC = dC.filter((y) => y > 0).length;
+  ok('回看不影响下滑次数（下滑≈回看，每次下滑后跟一次回看）', downsC >= 8, `downs=${downsC} total=${dC.length}`);
 
   // 复原
   win.Math.random = origDirRandom;
   win.scrollBy = origDirScrollBy;
-  reader.settings.backChance = 0.15;
-  reader.settings.backPixels = 5;
+  reader.settings.backEveryMin = 15;
+  reader.settings.backEveryMax = 40;
+  reader.settings.backPixelsMax = 5;
   reader.settings.scrollSpeed = 1;
   reader.settings.scrollInterval = 16;
   if (dirPosts) dirPosts.textContent = '1 / 1';
