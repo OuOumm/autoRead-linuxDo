@@ -3,3 +3,6 @@ node_modules/
 .tmp-test/
 *.log
 .DS_Store
+
+# 本地保留的历史完整功能副本（不发布）
+auto-read 完整功能版.js
