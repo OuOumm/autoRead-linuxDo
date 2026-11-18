@@ -4,9 +4,9 @@
 
 **Linux.do 自动阅读助手 · 一个单文件油猴脚本，把未读帖子自动读完**
 
-[![Version](https://img.shields.io/badge/version-4.5.0-2f81f7?style=flat-square)](https://github.com/OuOumm/autoRead-linuxDo/releases)
+[![Version](https://img.shields.io/badge/version-4.6.0-2f81f7?style=flat-square)](https://github.com/OuOumm/autoRead-linuxDo/releases)
 [![License](https://img.shields.io/badge/license-MIT-3fb950?style=flat-square)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-202%2F202%20passed-3fb950?style=flat-square)](#dev)
+[![Tests](https://img.shields.io/badge/tests-207%2F207%20passed-3fb950?style=flat-square)](#dev)
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-Chrome%20%7C%20Firefox%20%7C%20Edge-ffd33d?style=flat-square)](#install)
 [![GreasyFork](https://img.shields.io/badge/GreasyFork-Install-8250df?style=flat-square)](https://greasyfork.org/zh-CN/scripts/538431-auto-read-linux-do-only)
 
@@ -27,7 +27,7 @@ Auto Read 是一个 **只有一个文件** 的 Tampermonkey 脚本：装好之�
 - ✅ **数据只留本地**：状态、配额、日志、API Key 全部存在浏览器本地
 - ✅ **无人值守**：窗口失焦、切后台、被遮挡都继续读
 
-> 当前版本 **4.5.0**。想直接安装，看下一节；想先看能力清单，跳到 [功能亮点](#features)。
+> 当前版本 **4.6.0**。想直接安装，看下一节；想先看能力清单，跳到 [功能亮点](#features)。
 
 <a id="install"></a>
 
@@ -73,6 +73,7 @@ Auto Read 是一个 **只有一个文件** 的 Tampermonkey 脚本：装好之�
 - 自动识别并导航至未读帖子，读完全部后自动刷新未读列表
 - 按进度条（`.timeline-replies` 的「当前楼层 / 总楼层」）判定读完，**只有 `29/29` 这类追平状态才切下篇**，懒加载不会骗它提前跳走
 - **窗口失焦也继续滚**：滚动循环用 `setTimeout` 递归驱动，而不是 `requestAnimationFrame`（rAF 与渲染帧绑定，失焦会被浏览器暂停，表现为「没盯着就不滚了」）。后台标签页最多降频到约 1 秒一拍，但不会停
+- **方向随机（回看）**：默认每拍向下滚 `scrollSpeed` 像素，但有 `backChance`（默认 0.15）概率改为向上回看 `backPixels`（默认 5）像素。间隔固定、不停顿，只是偶尔往回瞟一眼；净进度仍为正，整体持续往下读。设 `backChance=0` 即退回纯向下匀速
 - **只有楼主的单楼帖也能过**：这类帖子不渲染进度条，读不到时先给约 3 秒宽限（防异步渲染误判），用完仍没有就当作读完直接跳下一篇，不会无限空滚
 - 自动标记已读，按帖子 ID 持久化去重；状态栏实时显示「今日已读 / 累计已读」，今日计数跨天自动归零
 
@@ -125,6 +126,8 @@ Auto Read 是一个 **只有一个文件** 的 Tampermonkey 脚本：装好之�
 | `aiModel` | `gpt-4.1-mini` | 请求时使用的模型名（面板可改） |
 | `scrollSpeed` | `1` | 每帧滚动像素（面板可改，1~200） |
 | `scrollInterval` | `16` | 每帧间隔毫秒（面板可改，8~10000），1px/16ms ≈ 60fps 顺滑 |
+| `backChance` | `0.15` | 回看概率：每拍有多大概率向上滚一小段，0=关闭 |
+| `backPixels` | `5` | 回看像素：触发时向上滚多少像素 |
 | `noProgressGraceMs` | `3000` | 读不到进度条时再滚多久才判读完（毫秒，与滚动间隔解耦） |
 
 已读统计不需要配置：直接读论坛自己维护的楼层标记 `.read-state.read`（已读）与 `.read-state`（未读），与滚动快慢无关。
@@ -163,7 +166,7 @@ npm install                 # 首次：只装 jsdom
 npm test                    # node test/run.js
 ```
 
-`test/run.js` 用 jsdom 造一个假的 Discourse 帖子页，把 `auto-read.js` 原样 `eval` 进去，并在进程内启动 HTTP mock 充当 AI 接口，覆盖 16 组场景：
+`test/run.js` 用 jsdom 造一个假的 Discourse 帖子页，把 `auto-read.js` 原样 `eval` 进去，并在进程内启动 HTTP mock 充当 AI 接口，覆盖 17 组场景：
 
 <details>
 <summary><b>展开测试覆盖清单</b></summary>
@@ -179,7 +182,7 @@ npm test                    # node test/run.js
 
 </details>
 
-当前 **202 项断言**，全绿为 `202/202 passed`。
+当前 **207 项断言**，全绿为 `207/207 passed`。
 
 <a id="faq"></a>
 

@@ -531,6 +531,7 @@ async function main() {
 
   reader.settings.scrollInterval = 5;
   reader.settings.scrollSpeed = 50;
+  reader.settings.backChance = 0;   // 关掉回看，先验证「向下滚」基准行为
   reader.state.isReading = true;
   reader.state.isPaused = false;
   reader.state.autoCommentEnabled = false;
@@ -780,6 +781,7 @@ async function main() {
   reader.openNextTopic = () => {};
   reader.settings.scrollSpeed = 1;
   reader.settings.scrollInterval = 16;   // 正常帧 16ms → 每帧 1px
+  reader.settings.backChance = 0;        // 关掉回看，先验基准节奏与时间补偿
   compPosts.textContent = '1 / 50';       // 未读完，避免提前停表
   reader.state.isReading = true;
   reader.state.isPaused = false;
@@ -812,6 +814,7 @@ async function main() {
   reader.openNextTopic = origCompNext;
   reader.settings.scrollSpeed = origCompSpeed;
   reader.settings.scrollInterval = origCompInterval;
+  reader.settings.backChance = 0.15;
   win.Math.random = origCompRandom;
   compPosts.textContent = '1 / 1';
   reader.state.isReading = false;
@@ -838,6 +841,60 @@ async function main() {
   const keptStore = new OrigStore({ instanceId: 'mig-2' });
   eq('新版本下用户自定义步长被保留', keptStore.settings.scrollSpeed, 3);
   eq('新版本下用户自定义间隔被保留', keptStore.settings.scrollInterval, 40);
+
+  // ===================== 18. 方向随机：向下为主，偶尔向上回看 =====================
+  // 用户要的「滚动时随机：往下 2px、往上 5px」，不做间隔抖动与停顿模拟。
+  reader.stopScrolling();
+  reader.state.isReading = true;
+  reader.state.isPaused = false;
+  const dirPosts = win.document.querySelector('.timeline-replies');
+  if (dirPosts) dirPosts.textContent = '1 / 50';
+  reader.settings.scrollSpeed = 2;
+  reader.settings.scrollInterval = 8;
+  reader.settings.backChance = 1;      // 恒定触发回看
+  reader.settings.backPixels = 5;
+  const origDirRandom = win.Math.random;
+  win.Math.random = () => 0;           // 0 < 1 恒真，必回看
+
+  const dY = [];
+  const origDirScrollBy = win.scrollBy;
+  win.scrollBy = (x, y) => { dY.push(y); };
+  reader.startScrolling();
+  await until(() => dY.length >= 3, 1000);
+  reader.stopScrolling();
+  ok('backChance=1 时全程向上回看', dY.length >= 3 && dY.every((y) => y < 0), `dY=${dY.slice(0, 5)}`);
+  ok('回看像素为 -5', dY[0] === -5, `first=${dY[0]}`);
+
+  // backChance=0 → 恒向下
+  reader.settings.backChance = 0;
+  const dY2 = [];
+  win.scrollBy = (x, y) => { dY2.push(y); };
+  reader.startScrolling();
+  await until(() => dY2.length >= 3, 1000);
+  reader.stopScrolling();
+  ok('backChance=0 时恒向下', dY2.length >= 3 && dY2.every((y) => y > 0), `dY2=${dY2.slice(0, 5)}`);
+  ok('向下步长为 2', dY2[0] === 2, `first=${dY2[0]}`);
+
+  // 概率 0.5 + 交替随机 → 上下都出现，且净进度为正（2 下 vs 5 上太多会倒退，这里校验方向混合）
+  reader.settings.backChance = 0.5;
+  let flip = 0;
+  win.Math.random = () => (flip++ % 2 === 0 ? 0 : 0.9);
+  const dY3 = [];
+  win.scrollBy = (x, y) => { dY3.push(y); };
+  reader.startScrolling();
+  await until(() => dY3.length >= 6, 1200);
+  reader.stopScrolling();
+  ok('概率 0.5 时上下方向都出现', dY3.some((y) => y > 0) && dY3.some((y) => y < 0), `dY3=${dY3.slice(0, 8)}`);
+
+  // 复原
+  win.Math.random = origDirRandom;
+  win.scrollBy = origDirScrollBy;
+  reader.settings.backChance = 0.15;
+  reader.settings.backPixels = 5;
+  reader.settings.scrollSpeed = 1;
+  reader.settings.scrollInterval = 16;
+  if (dirPosts) dirPosts.textContent = '1 / 1';
+  reader.state.isReading = false;
 
   clearInterval(reader.statusTimer);
   const pass = results.filter((r) => r.pass).length;

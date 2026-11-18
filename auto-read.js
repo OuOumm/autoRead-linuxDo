@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         自动阅读 linux.do 论坛
 // @namespace    https://github.com/auto-read-linuxDo
-// @version      4.5.0
+// @version      4.6.0
 // @description  自动滚动阅读 linux.do 未读帖子，支持自动点赞与 AI 评论；设置面板可配置 AI 接口地址与模型，并可一键测试生成回复。每个标签页一个实例，可多开并行互不干扰。滚动由计时器驱动，窗口失焦也不暂停；没有回复的单楼帖没有进度条，宽限约 3 秒后自动跳过。已读按论坛的 .read-state 标记统计，滚动由高频小步计时器驱动，顺滑流畅；节奏可在设置面板调节。面板使用 Shadow DOM 隔离，不依赖任何外部 CDN。
 // @author       OuOumm
 // @match        https://linux.do/*
@@ -19,7 +19,7 @@
 
     // ===================== 配置 =====================
     // 这里的值只是默认值，用户可在面板「设置」中覆盖，覆盖后存入本地存储。
-    const VERSION = '4.5.0';
+    const VERSION = '4.6.0';
 
     // 设置结构版本：改了 DEFAULTS 里的默认值就把它 +1，
     // 老存档里的对应项会被刷新成新默认（详见 Store#_migrateSettings）。
@@ -28,8 +28,10 @@
     const DEFAULTS = {
         likeLimit: 30,             // 每日点赞上限
         maxRetries: 3,             // 连续错误页重试次数
-        scrollSpeed: 1,            // 每拍滚动像素：高频小步（1px/16ms ≈ 62px/s），视觉顺滑不卡顿
-        scrollInterval: 16,        // 滚动间隔（毫秒）：≈60fps 一帧，配合时间补偿保持匀速
+        scrollSpeed: 1,            // 每拍向下滚动像素：高频小步（1px/16ms ≈ 62px/s），视觉顺滑不卡顿
+        scrollInterval: 16,        // 滚动间隔（毫秒）：≈60fps 一帧，固定节奏
+        backChance: 0.15,          // 回看概率：每拍有多大概率向上滚一小段（0=关闭）
+        backPixels: 5,             // 回看像素：触发回看时向上滚多少像素
         noProgressGraceMs: 3000,   // 读不到进度条时再滚多久才判读完（毫秒，约 3 秒），给异步渲染留窗口
         likeIntervalMin: 2000,     // 点赞间隔下限
         likeIntervalMax: 5000,     // 点赞间隔上限
@@ -64,8 +66,10 @@
     // 高频小步 + 时间补偿，数值含义是「每帧像素」与「帧间隔（毫秒）」。
     // 带安全区间（保存时钳制），防止填出 0ms 停摆或超大步长又变回跳帧。
     const SCROLL_FIELDS = [
-        { key: 'scrollSpeed', id: 'setScrollSpeed', label: '滚动步长（像素/帧）', type: 'number', min: 1, max: 200, step: 1 },
+        { key: 'scrollSpeed', id: 'setScrollSpeed', label: '向下滚动（像素/帧）', type: 'number', min: 1, max: 200, step: 1 },
         { key: 'scrollInterval', id: 'setScrollInterval', label: '滚动间隔（毫秒/帧）', type: 'number', min: 8, max: 10000, step: 8 },
+        { key: 'backChance', id: 'setBackChance', label: '回看概率（0~1，0=关闭）', type: 'number', min: 0, max: 1, step: 0.01 },
+        { key: 'backPixels', id: 'setBackPixels', label: '回看像素（向上）', type: 'number', min: 1, max: 100, step: 1 },
     ];
 
     // 选择器集中管理：优先用稳定的 class / 属性，中文 title 只做兜底，
@@ -1403,7 +1407,14 @@
                 // 按真实经过时间补偿：后台标签页被浏览器降频（比如 1 秒一拍）时，
                 // 一帧补上相应距离，整体速度不因降频变慢，也不会因补偿过大而跳屏。
                 const frames = Math.min(60, Math.max(0.5, elapsed / intervalMs()));
-                window.scrollBy(0, Math.max(1, Math.round(stepPx() * frames)));
+                // 方向随机：默认向下滚 scrollSpeed，偶尔（backChance）向上回看 backPixels。
+                // 只随机方向，间隔固定；净进度仍为正，整体继续往下读。
+                const chance = Math.max(0, Math.min(1, Number(this.settings.backChance) || 0));
+                const goingBack = chance > 0 && Math.random() < chance;
+                const delta = goingBack
+                    ? -Math.max(1, Math.round((Number(this.settings.backPixels) || 5) * frames))
+                    : Math.max(1, Math.round(stepPx() * frames));
+                window.scrollBy(0, delta);
 
                 // 高频滚动下没必要每帧都扫：约每 200ms 查一次已读/进度即可，
                 // 既跟得上论坛的 .read-state 更新，又不拖慢滚动。
