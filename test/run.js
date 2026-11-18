@@ -531,7 +531,6 @@ async function main() {
 
   reader.settings.scrollInterval = 5;
   reader.settings.scrollSpeed = 50;
-  reader.settings.backEveryMin = 0;  // 关掉回看，先验证「向下滚」基准行为
   reader.state.isReading = true;
   reader.state.isPaused = false;
   reader.state.autoCommentEnabled = false;
@@ -781,7 +780,6 @@ async function main() {
   reader.openNextTopic = () => {};
   reader.settings.scrollSpeed = 1;
   reader.settings.scrollInterval = 16;   // 正常帧 16ms → 每帧 1px
-  reader.settings.backEveryMin = 0;      // 关掉回看，先验基准节奏与时间补偿
   compPosts.textContent = '1 / 50';       // 未读完，避免提前停表
   reader.state.isReading = true;
   reader.state.isPaused = false;
@@ -814,7 +812,6 @@ async function main() {
   reader.openNextTopic = origCompNext;
   reader.settings.scrollSpeed = origCompSpeed;
   reader.settings.scrollInterval = origCompInterval;
-  reader.settings.backEveryMin = 15;
   win.Math.random = origCompRandom;
   compPosts.textContent = '1 / 1';
   reader.state.isReading = false;
@@ -841,73 +838,6 @@ async function main() {
   const keptStore = new OrigStore({ instanceId: 'mig-2' });
   eq('新版本下用户自定义步长被保留', keptStore.settings.scrollSpeed, 3);
   eq('新版本下用户自定义间隔被保留', keptStore.settings.scrollInterval, 40);
-
-  // ===================== 18. 回看：按次数触发、像素随机、不影响下滑 =====================
-  // 需求：正常下滑每拍照常；每隔随机 N 次下滑，额外叠加一次向上回看 1~N 像素。
-  reader.stopScrolling();
-  reader.state.isReading = true;
-  reader.state.isPaused = false;
-  const dirPosts = win.document.querySelector('.timeline-replies');
-  if (dirPosts) dirPosts.textContent = '1 / 50';
-  reader.settings.scrollSpeed = 2;
-  reader.settings.scrollInterval = 8;
-  const origDirRandom = win.Math.random;
-  const origDirScrollBy = win.scrollBy;
-
-  // 场景 A：关闭回看（backEveryMin=0）→ 全程向下，步长在基准附近（时间补偿会 ±1）
-  reader.settings.backEveryMin = 0;
-  reader.settings.backEveryMax = 0;
-  const dA = [];
-  win.scrollBy = (x, y) => { dA.push(y); };
-  reader.startScrolling();
-  await until(() => dA.length >= 4, 1000);
-  reader.stopScrolling();
-  ok('关闭回看时全程向下', dA.length >= 4 && dA.every((y) => y > 0), `dA=${dA.slice(0, 6)}`);
-  ok('向下步长在基准附近', dA.every((y) => y >= 2 && y <= 4), `dA=${dA.slice(0, 6)}`);
-
-  // 场景 B：每 3 次下滑回看一次。验证「下滑为主、每 3 次夹一次回看」
-  reader.settings.backEveryMin = 3;
-  reader.settings.backEveryMax = 3;
-  reader.settings.backPixelsMax = 5;
-  win.Math.random = () => 0;
-  const dB = [];
-  win.scrollBy = (x, y) => { dB.push(y); };
-  reader.startScrolling();
-  await until(() => dB.length >= 10, 1200);
-  reader.stopScrolling();
-  const downsB = dB.filter((y) => y > 0);
-  const backsB = dB.filter((y) => y < 0);
-  ok('回看按次数触发：下滑远多于回看', downsB.length >= 2 * backsB.length && backsB.length >= 2, `downs=${downsB.length} backs=${backsB.length}`);
-  // 回看出现在序列中：第 4 个正数动作后应有第一个负数
-  const firstBackIdx = dB.findIndex((y) => y < 0);
-  ok('约每 3 次下滑出现一次回看', firstBackIdx >= 2 && firstBackIdx <= 4, `firstBackIdx=${firstBackIdx} dB=${dB.slice(0, 10)}`);
-  ok('回看像素在 1~5 内', backsB.every((y) => y >= -5 && y <= -1), `backs=${backsB.slice(0, 5)}`);
-
-  // 场景 C：回看像素随机性 —— 用真实 Math.random 跑足够多帧
-  reader.settings.backEveryMin = 1;
-  reader.settings.backEveryMax = 1;
-  win.Math.random = origDirRandom;
-  const dC = [];
-  win.scrollBy = (x, y) => { dC.push(y); };
-  reader.startScrolling();
-  await until(() => dC.length >= 20, 2500);
-  reader.stopScrolling();
-  const backVals = dC.filter((y) => y < 0).map((y) => -y);
-  ok('回看像素随机（出现多个不同值）', new Set(backVals).size >= 2, `backVals=${backVals.slice(0, 12)}`);
-  ok('回看像素落在 1~5', backVals.every((v) => v >= 1 && v <= 5), `backVals=${backVals.slice(0, 12)}`);
-  const downsC = dC.filter((y) => y > 0).length;
-  ok('回看不影响下滑次数（下滑≈回看，每次下滑后跟一次回看）', downsC >= 8, `downs=${downsC} total=${dC.length}`);
-
-  // 复原
-  win.Math.random = origDirRandom;
-  win.scrollBy = origDirScrollBy;
-  reader.settings.backEveryMin = 15;
-  reader.settings.backEveryMax = 40;
-  reader.settings.backPixelsMax = 5;
-  reader.settings.scrollSpeed = 1;
-  reader.settings.scrollInterval = 16;
-  if (dirPosts) dirPosts.textContent = '1 / 1';
-  reader.state.isReading = false;
 
   clearInterval(reader.statusTimer);
   const pass = results.filter((r) => r.pass).length;
