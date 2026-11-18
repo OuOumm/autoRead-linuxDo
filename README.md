@@ -4,9 +4,9 @@
 
 **Linux.do 自动阅读助手 · 一个单文件油猴脚本，把未读帖子自动读完**
 
-[![Version](https://img.shields.io/badge/version-4.6.2-2f81f7?style=flat-square)](https://github.com/OuOumm/autoRead-linuxDo/releases)
+[![Version](https://img.shields.io/badge/version-4.7.0-2f81f7?style=flat-square)](https://github.com/OuOumm/autoRead-linuxDo/releases)
 [![License](https://img.shields.io/badge/license-MIT-3fb950?style=flat-square)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-202%2F202%20passed-3fb950?style=flat-square)](#dev)
+[![Tests](https://img.shields.io/badge/tests-217%2F217%20passed-3fb950?style=flat-square)](#dev)
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-Chrome%20%7C%20Firefox%20%7C%20Edge-ffd33d?style=flat-square)](#install)
 [![GreasyFork](https://img.shields.io/badge/GreasyFork-Install-8250df?style=flat-square)](https://greasyfork.org/zh-CN/scripts/538431-auto-read-linux-do-only)
 
@@ -27,7 +27,7 @@ Auto Read 是一个 **只有一个文件** 的 Tampermonkey 脚本：装好之�
 - ✅ **数据只留本地**：状态、配额、日志、API Key 全部存在浏览器本地
 - ✅ **无人值守**：窗口失焦、切后台、被遮挡都继续读
 
-> 当前版本 **4.6.2**。想直接安装，看下一节；想先看能力清单，跳到 [功能亮点](#features)。
+> 当前版本 **4.7.0**。想直接安装，看下一节；想先看能力清单，跳到 [功能亮点](#features)。
 
 <a id="install"></a>
 
@@ -73,6 +73,7 @@ Auto Read 是一个 **只有一个文件** 的 Tampermonkey 脚本：装好之�
 - 自动识别并导航至未读帖子，读完全部后自动刷新未读列表
 - 按进度条（`.timeline-replies` 的「当前楼层 / 总楼层」）判定读完，**只有 `29/29` 这类追平状态才切下篇**，懒加载不会骗它提前跳走
 - **窗口失焦也继续滚**：滚动循环用 `setTimeout` 递归驱动，而不是 `requestAnimationFrame`（rAF 与渲染帧绑定，失焦会被浏览器暂停，表现为「没盯着就不滚了」）。后台标签页最多降频到约 1 秒一拍，但不会停
+- **后台也算阅读量（前台保活）**：论坛靠 `document.hidden` / `hasFocus()` 判断"用户是否真的在看"，后台标签页这些信号全失效，脚本虽在滚但论坛不再上报已读。本脚本在 `document-start` 就把可见性伪装为前台，并定时派发 focus / mousemove / scroll 活跃脉冲，让论坛持续统计。可在设置里关闭（关后会还原真实可见性）
 - **只有楼主的单楼帖也能过**：这类帖子不渲染进度条，读不到时先给约 3 秒宽限（防异步渲染误判），用完仍没有就当作读完直接跳下一篇，不会无限空滚
 - 自动标记已读，按帖子 ID 持久化去重；状态栏实时显示「今日已读 / 累计已读」，今日计数跨天自动归零
 
@@ -133,6 +134,8 @@ Auto Read 是一个 **只有一个文件** 的 Tampermonkey 脚本：装好之�
 | `unseenLimit` | `300` | 单次抓取的未读帖上限 |
 | `logLimit` | `300` | 日志最多保留条数 |
 | `panelCollapsed` | `false` | 面板是否收起为右缘手柄 |
+| `keepForeground` | `true` | 前台保活：后台也计入论坛阅读量，关闭则还原真实可见性 |
+| `activityPulseMs` | `1000` | 活跃脉冲间隔（毫秒） |
 
 <a id="privacy"></a>
 
@@ -163,7 +166,7 @@ npm install                 # 首次：只装 jsdom
 npm test                    # node test/run.js
 ```
 
-`test/run.js` 用 jsdom 造一个假的 Discourse 帖子页，把 `auto-read.js` 原样 `eval` 进去，并在进程内启动 HTTP mock 充当 AI 接口，覆盖 16 组场景：
+`test/run.js` 用 jsdom 造一个假的 Discourse 帖子页，把 `auto-read.js` 原样 `eval` 进去，并在进程内启动 HTTP mock 充当 AI 接口，覆盖 18 组场景：
 
 <details>
 <summary><b>展开测试覆盖清单</b></summary>
@@ -176,10 +179,11 @@ npm test                    # node test/run.js
 - **单楼帖**：进度条文本为空 / 元素缺失时宽限时间用完自动跳过；进度条异步出现（未追平）会重置计时、不误跳
 - **已读统计**：读论坛自己的 `.read-state.read` 标记计数（有 read class 才算已读），与滚动几何无关；面板滚动字段区间钳制、单楼帖宽限按毫秒计时
 - **多实例**：实例 id 刷新后保持、`window.open` 副本拿新 id、状态与锁按实例分键互不串写、过期实例被清理、跨实例认领让位与接管、`topicKey` 归一化（忽略域名 / 查询串 / 结尾斜杠）
+- **前台保活**：可见性被伪装为 visible/focused、脉冲派发 visibilitychange/focus/mousemove/scroll、关闭开关后还原
 
 </details>
 
-当前 **202 项断言**，全绿为 `202/202 passed`。
+当前 **217 项断言**，全绿为 `217/217 passed`。
 
 <a id="faq"></a>
 

@@ -839,6 +839,57 @@ async function main() {
   eq('新版本下用户自定义步长被保留', keptStore.settings.scrollSpeed, 3);
   eq('新版本下用户自定义间隔被保留', keptStore.settings.scrollInterval, 40);
 
+  // ===================== 19. 前台保活（绕过后台阅读量检测） =====================
+  const keeper = app.keeper;
+  ok('keeper 已暴露', !!keeper);
+  ok('keeper 默认启用', keeper.active === true, `active=${keeper.active}`);
+
+  // 可见性被伪装成前台
+  eq('document.hidden 伪装为 false', win.document.hidden, false);
+  eq('visibilityState 伪装为 visible', win.document.visibilityState, 'visible');
+  eq('hasFocus() 伪装为 true', win.document.hasFocus(), true);
+
+  // 脉冲会派发 visibilitychange / focus / mousemove / scroll
+  let evVisibility = 0, evFocus = 0, evMouse = 0, evScroll = 0;
+  const onVis = () => evVisibility++;
+  const onFocus = () => evFocus++;
+  const onMouse = () => evMouse++;
+  const onScroll = () => evScroll++;
+  win.document.addEventListener('visibilitychange', onVis);
+  win.addEventListener('focus', onFocus);
+  win.document.addEventListener('mousemove', onMouse);
+  win.addEventListener('scroll', onScroll);
+  keeper._pulse();
+  ok('脉冲派发 visibilitychange', evVisibility >= 1, `n=${evVisibility}`);
+  ok('脉冲派发 focus', evFocus >= 1, `n=${evFocus}`);
+  ok('脉冲派发 mousemove', evMouse >= 1, `n=${evMouse}`);
+  ok('脉冲派发 scroll', evScroll >= 1, `n=${evScroll}`);
+  win.document.removeEventListener('visibilitychange', onVis);
+  win.removeEventListener('focus', onFocus);
+  win.document.removeEventListener('mousemove', onMouse);
+  win.removeEventListener('scroll', onScroll);
+
+  // 关闭开关 → 停止脉冲并还原属性
+  keeper.stop();
+  eq('stop 后 active=false', keeper.active, false);
+  ok('stop 后 hidden 被还原（jsdom 默认 false，这里验证不再被强制伪装）', typeof win.document.hidden === 'boolean');
+  ok('stop 后计时器清空', keeper.timer === null);
+  // 再开回来
+  keeper.start();
+  eq('start 后 active=true', keeper.active, true);
+  eq('重新伪装 hidden=false', win.document.hidden, false);
+
+  // keepForeground=false 时不启动
+  keeper.stop();
+  keeper.settings.keepForeground = false;
+  keeper.start();
+  eq('关闭开关时不激活', keeper.active, false);
+  keeper.settings.keepForeground = true;
+  keeper.start();
+
+  // 测试结束清理
+  keeper.stop();
+
   clearInterval(reader.statusTimer);
   const pass = results.filter((r) => r.pass).length;
   const fail = results.length - pass;

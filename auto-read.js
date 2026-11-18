@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         自动阅读 linux.do 论坛
 // @namespace    https://github.com/auto-read-linuxDo
-// @version      4.6.2
-// @description  自动滚动阅读 linux.do 未读帖子，支持自动点赞与 AI 评论；设置面板可配置 AI 接口地址与模型，并可一键测试生成回复。每个标签页一个实例，可多开并行互不干扰。滚动由计时器驱动，窗口失焦也不暂停；没有回复的单楼帖没有进度条，宽限约 3 秒后自动跳过。已读按论坛的 .read-state 标记统计，滚动由高频小步计时器驱动，顺滑流畅；节奏可在设置面板调节。面板使用 Shadow DOM 隔离，不依赖任何外部 CDN。
+// @version      4.7.0
+// @description  自动滚动阅读 linux.do 未读帖子，支持自动点赞与 AI 评论；设置面板可配置 AI 接口地址与模型，并可一键测试生成回复。每个标签页一个实例，可多开并行互不干扰。滚动由计时器驱动，窗口失焦也不暂停；没有回复的单楼帖没有进度条，宽限约 3 秒后自动跳过。已读按论坛的 .read-state 标记统计，滚动由高频小步计时器驱动，顺滑流畅；节奏可在设置面板调节。后台也能被论坛统计阅读量（前台保活）。面板使用 Shadow DOM 隔离，不依赖任何外部 CDN。
 // @author       OuOumm
 // @match        https://linux.do/*
-// @run-at       document-idle
+// @run-at       document-start
 // @noframes
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -17,9 +17,30 @@
 (function () {
     'use strict';
 
+    /* ---------------------------------------------------------------
+       前台保活 · 第一阶段（document-start 立即执行）
+       论坛在初始化时会读取 document.hidden / hasFocus 决定"是否要上报已读"。
+       等 document-idle 再伪装就晚了——那时论坛可能已经走过可见性判定。
+       所以这里在脚本最顶端（@run-at document-start）先把这几个属性钉死为"前台"。
+       完整保活（活跃脉冲、开关控制）在 ForegroundKeeper 里，等 DOM 就绪后接管。
+       --------------------------------------------------------------- */
+    const __fgOriginals = {};
+    (function earlyForeground() {
+        try {
+            const d = document;
+            ['hidden', 'webkitHidden', 'visibilityState', 'hasFocus'].forEach((k) => {
+                __fgOriginals[k] = Object.getOwnPropertyDescriptor(d, k);
+            });
+            Object.defineProperty(d, 'hidden', { configurable: true, get: () => false });
+            Object.defineProperty(d, 'webkitHidden', { configurable: true, get: () => false });
+            Object.defineProperty(d, 'visibilityState', { configurable: true, get: () => 'visible' });
+            Object.defineProperty(d, 'hasFocus', { configurable: true, value: () => true });
+        } catch (e) { /* 某些环境不允许覆盖，忽略，由 ForegroundKeeper 兜底 */ }
+    })();
+
     // ===================== 配置 =====================
     // 这里的值只是默认值，用户可在面板「设置」中覆盖，覆盖后存入本地存储。
-    const VERSION = '4.6.2';
+    const VERSION = '4.7.0';
 
     // 设置结构版本：改了 DEFAULTS 里的默认值就把它 +1，
     // 老存档里的对应项会被刷新成新默认（详见 Store#_migrateSettings）。
@@ -36,6 +57,10 @@
         waitTimeout: 8000,         // 等待元素超时（毫秒）
         commentLimit: 20,          // 每日评论上限
         panelCollapsed: false,     // 面板是否收起（只留右缘手柄）
+        // 前台保活：后台标签页里论坛靠 visibility/focus 判断"没在看"就不计阅读量。
+        // 伪装成前台并定时发活跃事件，让论坛继续统计。
+        keepForeground: true,      // 是否启用（关闭则完全不注入）
+        activityPulseMs: 1000,     // 活跃脉冲间隔（毫秒）
 
         readKeyLimit: 2000,        // 已读去重表最多保留条数
         unseenLimit: 300,          // 一次最多取多少个未读链接
@@ -731,6 +756,100 @@
         return { title, context };
     }
 
+    /* ===================== 前台保活 =====================
+       论坛（Discourse）统计"已读"依赖浏览器前台信号：
+         - document.hidden / visibilityState 判断页面是否可见
+         - document.hasFocus() 判断窗口是否聚焦
+         - IntersectionObserver / scroll 事件判断楼层是否真的被看到
+       标签页切到后台时这些全失效——脚本虽然用 setTimeout 还在滚，
+       论坛却认为"用户没在看"，于是不再上报阅读量。
+
+       绕过方式（可一键关闭 keepForeground=false）：
+         1) 覆盖 document 的 hidden / visibilityState / hasFocus，始终报告前台
+         2) 定时派发 visibilitychange/focus/mousemove/scroll 活跃脉冲，
+            让论坛的可见性与活跃检测持续触发
+         3) 滚动事件带 isTrusted=false，论坛一般不校验，足够骗过上报逻辑
+       注意：伪装是全局的，但只在页面内生效；关闭开关会恢复原始属性。 */
+    class ForegroundKeeper {
+        constructor(settings) {
+            this.settings = settings;
+            this.timer = null;
+            this.orig = null;
+            this.active = false;
+            this._onVisibility = null;
+        }
+
+        // 保存原描述符，便于关闭时精确还原
+        _patch() {
+            const d = document;
+            this.orig = {
+                hidden: Object.getOwnPropertyDescriptor(d, 'hidden'),
+                visibilityState: Object.getOwnPropertyDescriptor(d, 'visibilityState'),
+                hasFocus: Object.getOwnPropertyDescriptor(d, 'hasFocus'),
+            };
+            const cfg = (value) => ({ configurable: true, get: () => value });
+            try { Object.defineProperty(d, 'hidden', cfg(false)); } catch (e) {}
+            try { Object.defineProperty(d, 'visibilityState', cfg('visible')); } catch (e) {}
+            try { Object.defineProperty(d, 'hasFocus', { configurable: true, value: () => true }); } catch (e) {}
+        }
+
+        _restore() {
+            const d = document;
+            // 还原本类 _patch 保存的，以及 document-start 早期伪装保存的
+            const saved = Object.assign({}, __fgOriginals, this.orig || {});
+            for (const k of ['hidden', 'webkitHidden', 'visibilityState', 'hasFocus']) {
+                const desc = saved[k];
+                try {
+                    if (desc) Object.defineProperty(d, k, desc);
+                    else delete d[k];
+                } catch (e) {}
+            }
+            this.orig = null;
+        }
+
+        // 发一次"活跃"脉冲：模拟用户仍在看这个页面
+        _pulse() {
+            const d = document;
+            // 论坛监听 visibilitychange 重新判定可见性
+            try { d.dispatchEvent(new Event('visibilitychange')); } catch (e) {}
+            // window focus 事件让 hasFocus 相关监听刷新
+            try { window.dispatchEvent(new Event('focus')); } catch (e) {}
+            // 鼠标微动：很多"活跃度"判定看 mousemove
+            try {
+                const mm = new Event('mousemove', { bubbles: true });
+                Object.defineProperty(mm, 'clientX', { value: Math.floor(Math.random() * 800) });
+                Object.defineProperty(mm, 'clientY', { value: Math.floor(Math.random() * 600) });
+                d.dispatchEvent(mm);
+            } catch (e) {}
+            // 滚动事件：触发 IntersectionObserver 之外的 scroll 监听
+            try { window.dispatchEvent(new Event('scroll')); } catch (e) {}
+        }
+
+        start() {
+            if (this.active) return;
+            if (this.settings.keepForeground === false) return;
+            this.active = true;
+            this._patch();
+            this._pulse();
+            const interval = Math.max(200, Math.min(60000, Number(this.settings.activityPulseMs) || 1000));
+            this.timer = setInterval(() => this._pulse(), interval);
+        }
+
+        stop() {
+            if (!this.active) return;
+            this.active = false;
+            clearInterval(this.timer);
+            this.timer = null;
+            this._restore();
+        }
+
+        // 设置变化后调用：开关或间隔变了就重启
+        reconfigure() {
+            const wasActive = this.active;
+            this.stop();
+            if (wasActive || this.settings.keepForeground !== false) this.start();
+        }
+    }
     // ===================== UI：Shadow DOM 隔离 + 内联样式 =====================
     const STYLE = `
 :host {
@@ -971,6 +1090,10 @@
                     <div class="ar-sect-head" style="margin-top:4px"><span class="ar-sect-title">阅读节奏</span></div>
                     <div class="ar-hint" style="margin-bottom:6px">滚动越快读完越早；卡顿就调小步长。</div>
                     ${scrollInputs}
+                    <label class="ar-field" style="flex-direction:row;align-items:center;gap:8px">
+                        <input id="setKeepFg" type="checkbox" style="width:auto" ${settings.keepForeground !== false ? 'checked' : ''}>
+                        <span>前台保活（后台也计入阅读量）</span>
+                    </label>
                     ${aiInputs}
                     <label class="ar-field">AI API Key<input id="setKey" type="password" autocomplete="off" placeholder="${hasApiKey ? '已保存，留空则不修改' : '未设置'}"></label>
                     <div class="ar-row">
@@ -1068,6 +1191,7 @@
                             likeLimit: Math.max(0, Number(q('setLike').value) || 0),
                             commentLimit: Math.max(0, Number(q('setComment').value) || 0),
                             maxRetries: Math.max(0, Number(q('setRetry').value) || 0),
+                            keepForeground: q('setKeepFg').checked,
                         },
                         aiDraft(),
                         collect(SCROLL_FIELDS),
@@ -1234,6 +1358,7 @@
                 return false;
             }
             this.startHeartbeat();
+            if (this.keeper) this.keeper.start();
             this.state.isReading = true;
             this.state.isPaused = false;
             return true;
@@ -1256,6 +1381,7 @@
         }
 
         stopReading() {
+            if (this.keeper) this.keeper.stop();
             this.state.isReading = false;
             this.state.isPaused = false;
             if (this.abortCtrl) this.abortCtrl.abort();
@@ -1629,6 +1755,7 @@
                             // 保存时就校验：地址写错在这里拦下，而不是等半夜静默失败
                             const ai = validateAiSettings(rest);
                             this.store.updateSettings(Object.assign({}, rest, ai));
+                            if (this.keeper) this.keeper.reconfigure();
                             if (apiKey) this.store.setApiKey(apiKey);
                         } catch (e) {
                             this.ui.toast(String((e && e.message) || e || '保存失败'), 'bad');
@@ -1701,6 +1828,10 @@
             const store = new Store({ instanceId });
             const ui = new UI({ instanceId });
             const reader = new Reader({ store, ui });
+            // 前台保活：让后台标签页仍被论坛计入阅读量
+            const keeper = new ForegroundKeeper(store.settings);
+            reader.keeper = keeper;
+            keeper.start();
             reader.start();
             // 便于在控制台调试，也让测试能直接验证纯函数
             // 调试出口只暴露只读快照：真实 store 里有 API Key，
@@ -1708,6 +1839,7 @@
             window.__autoRead = {
                 ui,
                 reader,
+                keeper,
                 instanceId,
                 shortId,
                 store: {

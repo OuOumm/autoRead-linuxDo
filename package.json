@@ -1,6 +1,6 @@
 {
   "name": "auto-read-linuxdo",
-  "version": "4.6.2",
+  "version": "4.7.0",
   "private": true,
   "description": "linux.do 自动阅读 / 点赞 / AI 评论的 Tampermonkey 脚本（单文件，无构建）",
   "scripts": {
