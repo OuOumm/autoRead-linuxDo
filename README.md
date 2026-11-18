@@ -4,10 +4,10 @@
 
 **Linux.do 自动阅读助手 · 一个单文件油猴脚本，把未读帖子自动读完**
 
-[![Version](https://img.shields.io/badge/version-6.0.0-2f81f7?style=flat-square)](https://github.com/OuOumm/autoRead-linuxDo/releases)
+[![Version](https://img.shields.io/badge/version-6.1.0-2f81f7?style=flat-square)](https://github.com/OuOumm/autoRead-linuxDo/releases)
 [![License](https://img.shields.io/badge/license-MIT-3fb950?style=flat-square)](LICENSE)
-[![Lines](https://img.shields.io/badge/code-660%20lines-8250df?style=flat-square)](#dev)
-[![Tests](https://img.shields.io/badge/tests-79%2F79%20passed-3fb950?style=flat-square)](#dev)
+[![Lines](https://img.shields.io/badge/code-764%20lines-8250df?style=flat-square)](#dev)
+[![Tests](https://img.shields.io/badge/tests-108%2F108%20passed-3fb950?style=flat-square)](#dev)
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-Chrome%20%7C%20Firefox%20%7C%20Edge-ffd33d?style=flat-square)](#install)
 
 [快速开始](#install) · [功能](#features) · [配置](#config) · [常见问题](#faq) · [开发](#dev)
@@ -57,6 +57,7 @@ Auto Read 是一个 **只有一个文件、660 行** 的 Tampermonkey 脚本。�
 - 自动识别并导航至未读帖子，读完全部后刷新未读列表
 - 按进度条（`.timeline-replies` 的「当前楼层 / 总楼层」）判定读完，只有 `29/29` 这类追平状态才切下篇，懒加载骗不过它
 - **窗口失焦也继续滚**：滚动用 `setTimeout` 递归驱动而非 `requestAnimationFrame`（rAF 与渲染帧绑定，失焦会被暂停）；后台降频时按真实经过时间补偿距离，速度不变慢
+- **节奏随机化**：步长 ±50%、间隔 ±35% 每拍浮动，另有约 4% 概率插入 0.3~1.5 秒停顿，避免固定频率被识别；幅度设为 0 即回到恒定节奏
 - **只有楼主的单楼帖也能过**：这类帖子不渲染进度条，读不到时给约 3 秒宽限，用完仍没有就当作读完跳下一篇
 - **已读统计**：直接读论坛自己的 `.read-state.read` 楼层标记，按帖子 ID 去重，与滚动快慢无关
 
@@ -84,6 +85,10 @@ Auto Read 是一个 **只有一个文件、660 行** 的 Tampermonkey 脚本。�
 | `scrollSpeed` | `1` | 每帧滚动像素（1~200） |
 | `scrollInterval` | `16` | 每帧间隔毫秒（8~10000），1px/16ms ≈ 60fps |
 | `noProgressGraceMs` | `3000` | 读不到进度条时等多久才判读完 |
+| `scrollJitter` | `0.35` | 滚动间隔随机幅度（±35%） |
+| `speedJitter` | `0.5` | 滚动步长随机幅度（±50%） |
+| `pauseChance` | `0.04` | 每拍插入停顿的概率 |
+| `pauseMsMin` / `pauseMsMax` | `300` / `1500` | 停顿区间（毫秒） |
 | `likeIntervalMin` / `likeIntervalMax` | `2000` / `5000` | 点赞随机间隔（毫秒） |
 | `waitTimeout` | `8000` | 等待页面元素超时（毫秒） |
 | `unseenLimit` | `300` | 单次抓取的未读帖上限 |
@@ -140,7 +145,7 @@ npm test                    # node test/run.js
 
 `test/run.js` 用 jsdom 造假帖子页、`eval` 脚本，覆盖 8 组场景：纯函数、Store 计数与跨天归零、已读标记统计、滚动（rAF 冻结/时间补偿/暂停停止）、点赞服务端确认、队列守卫、错误重试上限、面板与字段钳制。
 
-当前 **79 项断言**，全绿为 `79/79 passed`。
+当前 **108 项断言**，全绿为 `108/108 passed`。
 
 <a id="license"></a>
 

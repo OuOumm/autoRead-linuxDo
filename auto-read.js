@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         自动阅读 linux.do 论坛
 // @namespace    https://github.com/auto-read-linuxDo
-// @version      6.0.1
-// @description  自动滚动阅读 linux.do 未读帖子，自动点赞，按论坛已读标记统计进度。滚动由计时器驱动，窗口失焦也不暂停。面板使用 Shadow DOM 隔离，不依赖任何外部 CDN。
+// @version      6.1.0
+// @description  自动滚动阅读 linux.do 未读帖子，自动点赞，按论坛已读标记统计进度。滚动由计时器驱动、节奏随机化（防固定频率识别），窗口失焦也不暂停。面板使用 Shadow DOM 隔离，不依赖任何外部 CDN。
 // @author       OuOumm
 // @match        https://linux.do/*
 // @run-at       document-idle
@@ -17,13 +17,19 @@
 (function () {
     'use strict';
 
-    const VERSION = '6.0.1';
+    const VERSION = '6.1.0';
 
     const DEFAULTS = {
         likeLimit: 30, maxRetries: 3,
         scrollSpeed: 1, scrollInterval: 16, noProgressGraceMs: 3000,
         likeIntervalMin: 2000, likeIntervalMax: 5000, waitTimeout: 8000,
         likeCooldownBufferMs: 30 * 60 * 1000,   // 上限解除后再多等 30 分钟才恢复点赞
+        // 滚动随机化：固定节奏容易被识别，这里让间隔与步长在基准值附近浮动
+        scrollJitter: 0.35,        // 间隔随机幅度（0.35 = ±35%）
+        speedJitter: 0.5,          // 步长随机幅度（0.5 = ±50%）
+        pauseChance: 0.04,         // 每拍随机停顿的概率
+        pauseMsMin: 300,           // 停顿最短毫秒
+        pauseMsMax: 1500,          // 停顿最长毫秒
         readKeyLimit: 2000, unseenLimit: 300,
         updateInterval: 500, saveThrottle: 2000,
         panelCollapsed: false, baseUrl: 'https://linux.do',
@@ -57,6 +63,12 @@
     /* ---------------- 工具 ---------------- */
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const randomBetween = (min, max) => Math.round(min + Math.random() * (max - min));
+    // 在基准值附近浮动：±ratio，返回浮点数
+    const jitter = (base, ratio) => {
+        const r = Math.max(0, Math.min(1, Number(ratio) || 0));
+        return base * (1 - r + Math.random() * r * 2);
+    };
+
     // 毫秒 → 「1小时23分」，用于显示点赞冷却剩余
     const fmtHours = (ms) => {
         const total = Math.max(0, Math.round(Number(ms) / 60000));
@@ -537,17 +549,22 @@
             if (this.scrollTimer || !this.state.isReading || this.state.isPaused) return;
             this._noProgressSince = 0;
             this._lastScanAt = 0;
-            const intervalMs = () => clampSetting(this.settings.scrollInterval, 8, 10000, 16);
-            const stepPx = () => clampSetting(this.settings.scrollSpeed, 1, 200, 1);
+            // 基准值（配置）+ 每拍扰动。固定节奏过于规律，这里让间隔与步长
+            // 在基准附近浮动，并偶发停顿，接近人手滚动的随机感。
+            const baseInterval = () => clampSetting(this.settings.scrollInterval, 8, 10000, 16);
+            const baseStep = () => clampSetting(this.settings.scrollSpeed, 1, 200, 1);
             const graceMs = () => clampSetting(this.settings.noProgressGraceMs, 1, 600000, 3000);
             let lastTs = 0;
             const tick = (ts) => {
                 if (!this.state.isReading || this.state.isPaused) { this.stopScrolling(); return; }
                 const now = ts || Date.now();
-                const elapsed = lastTs ? Math.min(1000, now - lastTs) : intervalMs();
+                const expect = baseInterval();
+                const elapsed = lastTs ? Math.min(1000, now - lastTs) : expect;
                 lastTs = now;
-                const frames = Math.min(60, Math.max(0.5, elapsed / intervalMs()));
-                window.scrollBy(0, Math.max(1, Math.round(stepPx() * frames)));
+                const frames = Math.min(60, Math.max(0.5, elapsed / expect));
+                // 步长每拍在 ±speedJitter 内浮动，再按经过时间补偿
+                const px = jitter(baseStep(), this.settings.speedJitter) * frames;
+                window.scrollBy(0, Math.max(1, Math.round(px)));
                 // 高频滚动下不必每帧都扫：约 200ms 检查一次进度与已读即可
                 if (!this._lastScanAt || now - this._lastScanAt >= 200) {
                     this._lastScanAt = now;
@@ -562,9 +579,17 @@
                         if (now - this._noProgressSince >= graceMs()) { this.stopScrolling(); this.onReachBottom(); return; }
                     }
                 }
-                this.scrollTimer = setTimeout(() => tick(Date.now()), intervalMs());
+                // 间隔随机化；小概率插入一次较长停顿，模拟"看一会儿再往下滚"
+                let delay = jitter(baseInterval(), this.settings.scrollJitter);
+                const pc = Math.max(0, Math.min(1, Number(this.settings.pauseChance) || 0));
+                if (pc > 0 && Math.random() < pc) {
+                    const lo = clampSetting(this.settings.pauseMsMin, 1, 60000, 300);
+                    const hi = Math.max(lo, clampSetting(this.settings.pauseMsMax, 1, 60000, 1500));
+                    delay += randomBetween(lo, hi);
+                }
+                this.scrollTimer = setTimeout(() => tick(Date.now()), Math.max(8, Math.round(delay)));
             };
-            this.scrollTimer = setTimeout(() => tick(Date.now()), intervalMs());
+            this.scrollTimer = setTimeout(() => tick(Date.now()), baseInterval());
         }
 
         stopScrolling() { if (this.scrollTimer) { clearTimeout(this.scrollTimer); this.scrollTimer = null; } }
