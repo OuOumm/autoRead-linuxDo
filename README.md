@@ -6,7 +6,7 @@
 
 [![Version](https://img.shields.io/badge/version-4.5.0-2f81f7?style=flat-square)](https://github.com/OuOumm/autoRead-linuxDo/releases)
 [![License](https://img.shields.io/badge/license-MIT-3fb950?style=flat-square)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-209%2F209%20passed-3fb950?style=flat-square)](#dev)
+[![Tests](https://img.shields.io/badge/tests-202%2F202%20passed-3fb950?style=flat-square)](#dev)
 [![Tampermonkey](https://img.shields.io/badge/Tampermonkey-Chrome%20%7C%20Firefox%20%7C%20Edge-ffd33d?style=flat-square)](#install)
 [![GreasyFork](https://img.shields.io/badge/GreasyFork-Install-8250df?style=flat-square)](https://greasyfork.org/zh-CN/scripts/538431-auto-read-linux-do-only)
 
@@ -73,7 +73,6 @@ Auto Read 是一个 **只有一个文件** 的 Tampermonkey 脚本：装好之�
 - 自动识别并导航至未读帖子，读完全部后自动刷新未读列表
 - 按进度条（`.timeline-replies` 的「当前楼层 / 总楼层」）判定读完，**只有 `29/29` 这类追平状态才切下篇**，懒加载不会骗它提前跳走
 - **窗口失焦也继续滚**：滚动循环用 `setTimeout` 递归驱动，而不是 `requestAnimationFrame`（rAF 与渲染帧绑定，失焦会被浏览器暂停，表现为「没盯着就不滚了」）。后台标签页最多降频到约 1 秒一拍，但不会停
-- **节奏随机化**：步长 ±50%、间隔 ±35% 每拍浮动，另有约 4% 概率插入 0.3~1.5 秒停顿，避免固定频率被识别；把幅度设为 0 即回到恒定节奏
 - **只有楼主的单楼帖也能过**：这类帖子不渲染进度条，读不到时先给约 3 秒宽限（防异步渲染误判），用完仍没有就当作读完直接跳下一篇，不会无限空滚
 - 自动标记已读，按帖子 ID 持久化去重；状态栏实时显示「今日已读 / 累计已读」，今日计数跨天自动归零
 
@@ -127,10 +126,6 @@ Auto Read 是一个 **只有一个文件** 的 Tampermonkey 脚本：装好之�
 | `scrollSpeed` | `1` | 每帧滚动像素（面板可改，1~200） |
 | `scrollInterval` | `16` | 每帧间隔毫秒（面板可改，8~10000），1px/16ms ≈ 60fps 顺滑 |
 | `noProgressGraceMs` | `3000` | 读不到进度条时再滚多久才判读完（毫秒，与滚动间隔解耦） |
-| `scrollJitter` | `0.35` | 滚动间隔随机幅度（±35%），固定节奏易被识别 |
-| `speedJitter` | `0.5` | 滚动步长随机幅度（±50%） |
-| `pauseChance` | `0.04` | 每拍插入停顿的概率（约 25 拍一次） |
-| `pauseMsMin` / `pauseMsMax` | `300` / `1500` | 停顿区间（毫秒） |
 
 已读统计不需要配置：直接读论坛自己维护的楼层标记 `.read-state.read`（已读）与 `.read-state`（未读），与滚动快慢无关。
 | `likeIntervalMin` / `likeIntervalMax` | `2000` / `5000` | 点赞随机间隔（毫秒） |
@@ -168,7 +163,7 @@ npm install                 # 首次：只装 jsdom
 npm test                    # node test/run.js
 ```
 
-`test/run.js` 用 jsdom 造一个假的 Discourse 帖子页，把 `auto-read.js` 原样 `eval` 进去，并在进程内启动 HTTP mock 充当 AI 接口，覆盖 17 组场景：
+`test/run.js` 用 jsdom 造一个假的 Discourse 帖子页，把 `auto-read.js` 原样 `eval` 进去，并在进程内启动 HTTP mock 充当 AI 接口，覆盖 16 组场景：
 
 <details>
 <summary><b>展开测试覆盖清单</b></summary>
@@ -181,11 +176,10 @@ npm test                    # node test/run.js
 - **单楼帖**：进度条文本为空 / 元素缺失时宽限时间用完自动跳过；进度条异步出现（未追平）会重置计时、不误跳
 - **已读统计**：读论坛自己的 `.read-state.read` 标记计数（有 read class 才算已读），与滚动几何无关；面板滚动字段区间钳制、单楼帖宽限按毫秒计时
 - **多实例**：实例 id 刷新后保持、`window.open` 副本拿新 id、状态与锁按实例分键互不串写、过期实例被清理、跨实例认领让位与接管、`topicKey` 归一化（忽略域名 / 查询串 / 结尾斜杠）
-- **滚动随机化**：步长/间隔浮动、停顿概率生效、幅度归零后节奏可复现
 
 </details>
 
-当前 **209 项断言**，全绿为 `209/209 passed`。
+当前 **202 项断言**，全绿为 `202/202 passed`。
 
 <a id="faq"></a>
 

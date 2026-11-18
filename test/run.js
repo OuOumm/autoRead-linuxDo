@@ -10,7 +10,6 @@
  *   - 滚动：rAF 冻结（模拟窗口失焦）时计时器仍持续驱动滚动，暂停/停止/读完都停表
  *   - 单楼帖：没有「当前楼层 / 总楼层」进度条时宽限几拍后自动跳过，进度条异步出现不会误跳
  *   - 已读判定：读论坛的 .read-state.read 标记统计；滚动参数可钳制；各实例可独立启停
- *   - 滚动随机化：步长/间隔浮动、停顿概率、幅度归零可复现
  *
  * 运行：npm test（需先 npm install）
  */
@@ -648,7 +647,6 @@ async function main() {
   scrollCalls2 = 0;
   reader.settings.scrollInterval = 20;
   reader.settings.noProgressGraceMs = 400;
-  reader.settings.pauseChance = 0;   // 关掉随机停顿，避免偶发拖慢这几拍
   reader.stopScrolling();
   reader.scrollTimer = null;
   reader._noProgressSince = 0;
@@ -788,16 +786,9 @@ async function main() {
   reader.stopScrolling();
   reader.scrollTimer = null;
 
-  // 先关随机，验「基准节奏 + 时间补偿」本身是对的（随机另有专项测试）
-  const jitSnap = {
-    s: reader.settings.scrollJitter, v: reader.settings.speedJitter, p: reader.settings.pauseChance,
-  };
-  reader.settings.scrollJitter = 0;
-  reader.settings.speedJitter = 0;
-  reader.settings.pauseChance = 0;
   reader.startScrolling();
   await until(() => compY.length >= 2, 1000);
-  ok('关闭随机后每帧 1px（顺滑小步）', compY.length >= 2 && compY[0] === 1 && compY[1] === 1, `compY=${compY.slice(0, 5)}`);
+  ok('正常帧每帧滚动 1px（顺滑小步）', compY.length >= 2 && compY[0] === 1 && compY[1] === 1, `compY=${compY.slice(0, 5)}`);
 
   // 用受控时钟验时间补偿。注意：脚本跑在 jsdom 的 window 上下文里，
   // 内部用的是 window.Date，所以要打 win.Date.now，改 Node 的 Date.now 不生效。
@@ -812,11 +803,6 @@ async function main() {
   const compensated = compY.slice(mark).reduce((m, v) => Math.max(m, v), 0);
   ok('降频后按经过时间补偿距离（5 帧补约 5px）', compensated >= 4, `compensated=${compensated}, new=${compY.slice(mark)}`);
   ok('补偿有上限不会跳屏', compensated <= 60, `compensated=${compensated}`);
-
-  // 复原随机设置
-  reader.settings.scrollJitter = jitSnap.s;
-  reader.settings.speedJitter = jitSnap.v;
-  reader.settings.pauseChance = jitSnap.p;
 
   // 复原
   reader.stopScrolling();
@@ -852,74 +838,6 @@ async function main() {
   const keptStore = new OrigStore({ instanceId: 'mig-2' });
   eq('新版本下用户自定义步长被保留', keptStore.settings.scrollSpeed, 3);
   eq('新版本下用户自定义间隔被保留', keptStore.settings.scrollInterval, 40);
-
-  // ===================== 17. 滚动随机化（防固定节奏识别） =====================
-  reader.stopScrolling();
-  reader.state.isReading = true;
-  reader.state.isPaused = false;
-  const rt = win.document.querySelector('.timeline-replies');
-  if (rt) rt.textContent = '1 / 50';
-  reader.settings.scrollInterval = 16;
-  reader.settings.scrollSpeed = 10;
-  reader.settings.scrollJitter = 0.35;
-  reader.settings.speedJitter = 0.5;
-  reader.settings.pauseChance = 0;
-
-  const rY = [];
-  const origScrollByR = win.scrollBy;
-  win.scrollBy = (x, y) => { rY.push(y); };
-  reader.startScrolling();
-  await until(() => rY.length >= 12, 1500);
-  reader.stopScrolling();
-  win.scrollBy = origScrollByR;
-
-  ok('采到足够样本', rY.length >= 12, `n=${rY.length}`);
-  const pxMin = Math.min(...rY), pxMax = Math.max(...rY);
-  // 基准 10px、±50% → 5~15，叠加时间补偿余量后上限放宽到 22
-  ok('步长在合理区间内', pxMin >= 4 && pxMax <= 22, `min=${pxMin} max=${pxMax}`);
-  ok('步长确实有波动（非固定值）', pxMax > pxMin, `min=${pxMin} max=${pxMax}`);
-  ok('出现多种不同步长', new Set(rY).size >= 3, `unique=${new Set(rY).size}`);
-
-  const y2 = [];
-  win.scrollBy = () => { y2.push(Date.now()); };
-  reader.startScrolling();
-  await until(() => y2.length >= 6, 1500);
-  reader.stopScrolling();
-  win.scrollBy = origScrollByR;
-  const gaps = [];
-  for (let i = 1; i < y2.length; i++) gaps.push(y2[i] - y2[i - 1]);
-  ok('间隔有波动（非固定节奏）', new Set(gaps.map((g) => Math.round(g / 2))).size >= 2, `gaps=${gaps.join(',')}`);
-
-  reader.settings.pauseChance = 1;
-  reader.settings.pauseMsMin = 50;
-  reader.settings.pauseMsMax = 60;
-  const y3 = [];
-  win.scrollBy = () => { y3.push(Date.now()); };
-  reader.startScrolling();
-  await until(() => y3.length >= 2, 2000);
-  reader.stopScrolling();
-  win.scrollBy = origScrollByR;
-  const pausedGap = y3.length >= 2 ? y3[1] - y3[0] : 0;
-  ok('pauseChance=1 时每拍都有停顿', pausedGap >= 50, `gap=${pausedGap}`);
-
-  reader.settings.pauseChance = 0;
-  reader.settings.scrollJitter = 0;
-  reader.settings.speedJitter = 0;
-  const y4 = [];
-  win.scrollBy = (x, y) => { y4.push(y); };
-  reader.startScrolling();
-  await until(() => y4.length >= 5, 1200);
-  reader.stopScrolling();
-  win.scrollBy = origScrollByR;
-  ok('随机幅度为 0 时步长稳定', Math.max(...y4) - Math.min(...y4) <= 2, `min=${Math.min(...y4)} max=${Math.max(...y4)}`);
-
-  reader.settings.scrollJitter = 0.35;
-  reader.settings.speedJitter = 0.5;
-  reader.settings.pauseChance = 0.04;
-  reader.settings.scrollSpeed = 1;
-  reader.settings.scrollInterval = 16;
-  if (rt) rt.textContent = '1 / 1';
-  reader.state.isReading = false;
 
   clearInterval(reader.statusTimer);
   const pass = results.filter((r) => r.pass).length;

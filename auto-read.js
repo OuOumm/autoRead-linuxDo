@@ -31,11 +31,6 @@
         scrollSpeed: 1,            // 每拍滚动像素：高频小步（1px/16ms ≈ 62px/s），视觉顺滑不卡顿
         scrollInterval: 16,        // 滚动间隔（毫秒）：≈60fps 一帧，配合时间补偿保持匀速
         noProgressGraceMs: 3000,   // 读不到进度条时再滚多久才判读完（毫秒，约 3 秒），给异步渲染留窗口
-        scrollJitter: 0.35,        // 滚动间隔随机幅度（±35%），固定节奏易被识别
-        speedJitter: 0.5,          // 滚动步长随机幅度（±50%）
-        pauseChance: 0.04,         // 每拍插入停顿的概率
-        pauseMsMin: 300,           // 停顿最短毫秒
-        pauseMsMax: 1500,          // 停顿最长毫秒
         likeIntervalMin: 2000,     // 点赞间隔下限
         likeIntervalMax: 5000,     // 点赞间隔上限
         waitTimeout: 8000,         // 等待元素超时（毫秒）
@@ -176,11 +171,6 @@
         return (post && post.getAttribute('data-post-id')) || (btn && btn.id) || 'unknown';
     };
     const randomBetween = (min, max) => Math.round(min + Math.random() * (max - min));
-    // 在基准值附近浮动：±ratio，返回浮点数；ratio=0 时恒等于 base
-    const jitter = (base, ratio) => {
-        const r = Math.max(0, Math.min(1, Number(ratio) || 0));
-        return base * (1 - r + Math.random() * r * 2);
-    };
 
     function textOf(el, max = 0) {
         const t = (el && el.textContent ? el.textContent : '').replace(/\s+/g, ' ').trim();
@@ -1413,9 +1403,7 @@
                 // 按真实经过时间补偿：后台标签页被浏览器降频（比如 1 秒一拍）时，
                 // 一帧补上相应距离，整体速度不因降频变慢，也不会因补偿过大而跳屏。
                 const frames = Math.min(60, Math.max(0.5, elapsed / intervalMs()));
-                // 步长每拍在 ±speedJitter 内浮动，再按经过时间补偿
-                const px = jitter(stepPx(), this.settings.speedJitter) * frames;
-                window.scrollBy(0, Math.max(1, Math.round(px)));
+                window.scrollBy(0, Math.max(1, Math.round(stepPx() * frames)));
 
                 // 高频滚动下没必要每帧都扫：约每 200ms 查一次已读/进度即可，
                 // 既跟得上论坛的 .read-state 更新，又不拖慢滚动。
@@ -1440,15 +1428,8 @@
                         }
                     }
                 }
-                // 间隔随机化；小概率插入一次较长停顿，模拟"看一会儿再往下滚"
-                let delay = jitter(intervalMs(), this.settings.scrollJitter);
-                const pc = Math.max(0, Math.min(1, Number(this.settings.pauseChance) || 0));
-                if (pc > 0 && Math.random() < pc) {
-                    const lo = Math.min(60000, Math.max(1, Number(this.settings.pauseMsMin) || 300));
-                    const hi = Math.max(lo, Math.min(60000, Number(this.settings.pauseMsMax) || 1500));
-                    delay += randomBetween(lo, hi);
-                }
-                this.scrollTimer = setTimeout(() => tick(Date.now()), Math.max(8, Math.round(delay)));
+                // 每帧排下一拍，保持约 60fps 的顺滑节奏。
+                this.scrollTimer = setTimeout(() => tick(Date.now()), intervalMs());
             };
             this.scrollTimer = setTimeout(() => tick(Date.now()), intervalMs());
         }
